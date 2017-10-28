@@ -1,6 +1,8 @@
 package main
 
 import (
+	"flag"
+
 	"github.com/nickw444/miio-go"
 	"github.com/nickw444/miio-go/common"
 	device "github.com/nickw444/miio-go/device"
@@ -10,7 +12,7 @@ import (
 var devices = map[uint32]HKDevice{}
 var log = logrus.New()
 
-func NewDevice(dev common.Device) {
+func NewDevice(dev common.Device, pin string) {
 	if _, ok := devices[dev.ID()]; ok {
 		log.Infof("New Device event for already known device: %d", dev.ID())
 		return
@@ -19,7 +21,7 @@ func NewDevice(dev common.Device) {
 	var hkDev HKDevice
 	switch dev.(type) {
 	case *device.PowerPlug:
-		hkDev = NewHKPowerPlug(dev.(*device.PowerPlug), "12341234")
+		hkDev = NewHKPowerPlug(dev.(*device.PowerPlug), pin)
 	case *device.Yeelight:
 		hkDev = NewHKYeelight(dev.(*device.Yeelight))
 	}
@@ -35,10 +37,30 @@ func NewDevice(dev common.Device) {
 func ExpiredDevice(device common.Device) {
 	if hkDev, ok := devices[device.ID()]; ok {
 		hkDev.Stop()
+		delete(devices, device.ID())
 	}
 }
 
 func main() {
+	pin := flag.String("pin", "", "Homekit device pin")
+	debug := flag.Bool("debug", false, "Enable debug")
+	miioDebug := flag.Bool("miio-debug", false, "Enable miio debug")
+	flag.Parse()
+
+	if *pin == "" {
+		log.Panicf("Must provide a pin")
+	}
+
+	if *debug {
+		log.SetLevel(logrus.DebugLevel)
+	}
+
+	if *miioDebug {
+		miioLogger := logrus.New()
+		miioLogger.SetLevel(logrus.DebugLevel)
+		common.SetLogger(miioLogger)
+	}
+
 	client, err := miio.NewClient()
 	if err != nil {
 		panic(err)
@@ -56,7 +78,7 @@ func main() {
 
 			switch event.(type) {
 			case common.EventNewDevice:
-				go NewDevice(event.(common.EventNewDevice).Device)
+				go NewDevice(event.(common.EventNewDevice).Device, *pin)
 			case common.EventExpiredDevice:
 				go ExpiredDevice(event.(common.EventExpiredDevice).Device)
 			}
