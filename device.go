@@ -106,17 +106,78 @@ func (p *HKPowerPlug) Stop() error {
 type HKYeelight struct {
 	hkDevice
 	dev *device.Yeelight
+	sub subscription.Subscription
 }
 
-func NewHKYeelight(dev *device.Yeelight) *HKYeelight {
-	return &HKYeelight{
-		dev: dev,
+func NewHKYeelight(dev *device.Yeelight, pin string) *HKYeelight {
+	log := log.WithField("device", "HKYeelight").WithField("id", dev.ID())
+	yeelight := &HKYeelight{
+		dev:      dev,
+		hkDevice: hkDevice{pin: pin, log: log},
 	}
+
+	return yeelight
 }
 
 func (y *HKYeelight) Start() error {
+	sub, err := y.dev.NewSubscription()
+	if err != nil {
+		return err
+	}
+	y.sub = sub
+
+	acc := accessory.NewLightbulb(accessory.Info{
+		Name:         fmt.Sprintf("Yeelight %d", y.dev.ID()),
+		Manufacturer: "MiiO",
+		Model:        "Yeelight",
+		SerialNumber: fmt.Sprintf("%d", y.dev.ID()),
+	})
+
+	acc.Lightbulb.On.OnValueRemoteUpdate(func(on bool) {
+		if on {
+			y.dev.SetPower(common.PowerStateOn)
+		} else {
+			y.dev.SetPower(common.PowerStateOff)
+		}
+	})
+
+	acc.Lightbulb.Brightness.OnValueRemoteUpdate(func(brightness int) {
+		y.dev.SetBrightness(brightness)
+	})
+
+	acc.Lightbulb.Hue.OnValueRemoteUpdate(func(hue float64) {
+		y.dev.SetHSV(int(hue), int(acc.Lightbulb.Saturation.GetValue()))
+	})
+
+	acc.Lightbulb.Saturation.OnValueRemoteUpdate(func(sat float64) {
+		y.dev.SetHSV(int(acc.Lightbulb.Hue.GetValue()), int(sat))
+	})
+
+	go y.StartTransport(y.dev.ID(), acc.Accessory)
+	go func() {
+		for event := range sub.Events() {
+			y.log.Infof("Handling event: %T", event)
+			switch event.(type) {
+			case common.EventUpdatePower:
+				powerState := event.(common.EventUpdatePower).PowerState
+				if powerState == common.PowerStateOn {
+					acc.Lightbulb.On.SetValue(true)
+				} else if powerState == common.PowerStateOff {
+					acc.Lightbulb.On.SetValue(false)
+				}
+			case common.EventUpdateLight:
+				ev := event.(common.EventUpdateLight)
+				acc.Lightbulb.Hue.SetValue(float64(ev.Hue))
+				acc.Lightbulb.Brightness.SetValue(ev.Brightness)
+				acc.Lightbulb.Saturation.SetValue(float64(ev.Saturation))
+			}
+		}
+	}()
+
 	return nil
 }
 func (y *HKYeelight) Stop() error {
+	y.sub.Close()
+	y.StopTransport()
 	return nil
 }

@@ -23,7 +23,7 @@ func NewDevice(dev common.Device, pin string) {
 	case *device.PowerPlug:
 		hkDev = NewHKPowerPlug(dev.(*device.PowerPlug), pin)
 	case *device.Yeelight:
-		hkDev = NewHKYeelight(dev.(*device.Yeelight))
+		hkDev = NewHKYeelight(dev.(*device.Yeelight), pin)
 	}
 
 	err := hkDev.Start()
